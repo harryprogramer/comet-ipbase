@@ -1,20 +1,20 @@
 package io.lagpixel.comet;
 
-import io.lagpixel.comet.codec.PacketCodec;
 import io.lagpixel.comet.channel.FutureJob;
 import io.lagpixel.comet.errors.BindException;
-import io.lagpixel.comet.errors.TransportNotFound;
-import io.lagpixel.comet.host.AbstractServerCore;
-import io.lagpixel.comet.host.ChannelListener;
-import io.lagpixel.comet.host.ChannelPacketHandler;
-import io.lagpixel.comet.host.ServerChannel;
+import io.lagpixel.comet.channel.ChannelHandler;
+import io.lagpixel.comet.channel.ServerChannel;
 import io.lagpixel.comet.channel.ChannelParameter;
+import io.lagpixel.comet.channel.ServerChannelFactory;
+import io.lagpixel.comet.pipeline.ChannelPipeline;
+import io.lagpixel.comet.pipeline.DefaultChannelPipeline;
+import io.lagpixel.comet.transport.socket.SocketServerChannel;
+import io.lagpixel.comet.worker.JobWorker;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
 import java.net.InetSocketAddress;
 import java.util.HashMap;
 import java.util.Map;
@@ -24,29 +24,68 @@ public final class ServerRuntime {
     private final static Logger logger = LoggerFactory.getLogger(ServerRuntime.class);
 
     private final Map<ChannelParameter<?>, Object> options = new HashMap<>();
-    private Class<? extends ChannelListener> channelListener;
-    private ChannelPacketHandler<?> packetHandler;
-    private PacketCodec<?> packetCodec;
-    private AbstractServerCore kernel;
+    private Class<? extends ChannelHandler> channelListener;
+    private ChannelMessageHandler<?> packetHandler;
+    private ServerChannelFactory factory;
 
-    public ServerRuntime(ChannelPacketHandler<?> packetHandler, Class<? extends ChannelListener> listener,
-            PacketCodec<?> packetCodec) {
-        this(packetHandler, listener, packetCodec, null);
+    private final ChannelPipeline pipeline = new DefaultChannelPipeline();
+    private ServerChannel channel;
+    private JobWorker bossWorker;
+    private JobWorker worker;
+
+    private void validate(){
+        Objects.requireNonNull(channelListener, "no channel handler was set");
+        Objects.requireNonNull(packetHandler, "no packet handler was set");
+        Objects.requireNonNull(worker, "no worker was set");
+        Objects.requireNonNull(bossWorker, "bossWorker was not set");
     }
 
-    public ServerRuntime(ChannelPacketHandler<?> packetHandler, Class<? extends ChannelListener> listener,
-            PacketCodec<?> packetCodec, AbstractServerCore core) {
-        this.channelListener = listener;
-        this.packetCodec = packetCodec;
-        this.packetHandler = packetHandler;
-
-        this.kernel = Objects.requireNonNullElseGet(core, () -> loadCore("io.lagpixel.comet.transport.socket.SocketTransport"));
+    private ServerChannel createTransport(@NotNull ServerChannelFactory factory) throws IOException {
+        return Objects.requireNonNull(factory.createNewChannel(worker, bossWorker,options,
+                        channelListener, packetHandler, pipeline),
+                "factory create null instance");
     }
 
+    public ChannelPipeline datapipe(){
+        return pipeline;
+    }
 
+    public @NotNull ServerRuntime channelHandler(Class<? extends ChannelHandler> listener){
+        this.channelListener = Objects.requireNonNull(listener);
+        return this;
+    }
+
+    public @NotNull ServerRuntime handler(ChannelMessageHandler<?> handler){
+        this.packetHandler = Objects.requireNonNull(handler);
+        return this;
+    }
+
+    public ServerRuntime worker(JobWorker worker){
+        this.worker = Objects.requireNonNull(worker);
+        return this;
+    }
+
+    public ServerRuntime bossWorker(JobWorker worker){
+        this.bossWorker = Objects.requireNonNull(worker);
+        return this;
+    }
+
+    @NotNull
     public FutureJob<ServerChannel> bind(InetSocketAddress addr) throws IOException {
-        if(kernel.isOpen()) {
-            logger.warn("bind(): server already bound on {}", kernel.getBindAddress());
+        try{
+            validate();
+        }catch (NullPointerException e){
+            logger.error("bind(): runtime configuration not complete, look exception message");
+            throw e;
+        }
+
+        if(factory == null){
+            logger.info("no channel specified for {}, selecting default: {}", this.getClass(), SocketServerChannel.FACTORY);
+            this.factory = SocketServerChannel.FACTORY;
+        }
+        this.channel = createTransport(factory);
+        if(!channel.isClosed()) {
+            logger.warn("bind(): server already bound on {}", channel.getRemoteAddress());
             throw new BindException("server already bound");
         }
 
@@ -55,41 +94,29 @@ public final class ServerRuntime {
             throw new BindException("target address unresolved (" + addr + ")");
         }
         logger.info("bind(): bind success on " + addr);
-        return kernel.bind(Objects.requireNonNull(addr));
+        return channel.bind(Objects.requireNonNull(addr));
     }
 
     private static Class<?> loadClass(String name) throws ClassNotFoundException {
         return ServerRuntime.class.getClassLoader().loadClass(name);
     }
 
-    private static @NotNull AbstractServerCore loadCore(String className){
-        try {
-           Class<?> clazz = loadClass(className);
-           if(clazz.isAssignableFrom(AbstractServerCore.class)){
-               return (AbstractServerCore) clazz.getDeclaredConstructor().newInstance();
-           }else {
-               logger.error("loadCore(): transport {} can not be cast", className);
-               throw new TransportNotFound("incorrect transport class in " + className);
-           }
-        }catch (ClassNotFoundException | NoSuchMethodException |
-                InstantiationException | IllegalAccessException | InvocationTargetException e){
-           logger.error("loadCore(): cannot find transport: " + className);
-           throw new TransportNotFound(e.getMessage());
-        }
-    }
-
-    public void setCore(AbstractServerCore kernel){
-        if(kernel != null && kernel.isOpen()){
+    public ServerRuntime channel(ServerChannelFactory channelFactory){
+        if(channel != null && !channel.isClosed()){
             logger.error("setCore(): server already running, cannot change core.");
             throw new RuntimeException("core already set and running");
         }
-        this.kernel = Objects.requireNonNull(kernel);
+        this.factory = Objects.requireNonNull(channelFactory);
+        return this;
     }
 
     public <T> void addOption(ChannelParameter<T> option, T value){
         Objects.requireNonNull(option, "option is null");
         Objects.requireNonNull(value, "value is null");
-
         options.put(option, value);
+    }
+
+    public void deleteOption(ChannelParameter<?> option){
+        options.remove(option);
     }
 }

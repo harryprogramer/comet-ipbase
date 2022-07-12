@@ -10,6 +10,18 @@ public class SimpleTask<T> extends Task<T> {
         this(callable, 0, TimeUnit.MILLISECONDS);
     }
 
+    public SimpleTask(Runnable callable, long delay, TimeUnit unit){
+        super(delay, unit);
+        this.callable = () -> {
+            callable.run();
+            return null;
+        };
+    }
+
+    public SimpleTask(Runnable callable){
+        this(callable, 0, TimeUnit.MILLISECONDS);
+    }
+
     public SimpleTask(Callable<T> callable, long delay, TimeUnit unit){
         super(delay, unit);
         this.callable = callable;

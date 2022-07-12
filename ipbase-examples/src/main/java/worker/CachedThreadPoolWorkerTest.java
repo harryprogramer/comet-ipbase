@@ -1,16 +1,15 @@
 package worker;
 
 import io.lagpixel.comet.channel.FutureJob;
-import io.lagpixel.comet.worker.CachedThreadPoolWorker;
+import io.lagpixel.comet.worker.ThreadPoolWorker;
 import io.lagpixel.comet.worker.SimpleTask;
-import io.netty.channel.ChannelFuture;
 
 import java.util.concurrent.ExecutionException;
 
 public class CachedThreadPoolWorkerTest {
     public static void main(String[] args) throws ExecutionException, InterruptedException {
-        CachedThreadPoolWorker poolWorker = new CachedThreadPoolWorker();
-        FutureJob<String> future = poolWorker.scheduleJob(new SimpleTask<>(() -> {
+        ThreadPoolWorker poolWorker = new ThreadPoolWorker();
+        FutureJob<String> future = poolWorker.schedule(new SimpleTask<>(() -> {
             return "siema";
         }));
 

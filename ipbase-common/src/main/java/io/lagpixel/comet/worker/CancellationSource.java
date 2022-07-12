@@ -28,6 +28,11 @@ public final class CancellationSource {
 
             this.s = new_s;
         }
+
+        @Override
+        public String toString() {
+            return this.name() + ": " + s;
+        }
     }
 
     private final Reason reason;
@@ -51,6 +56,7 @@ public final class CancellationSource {
     }
 
     public CancellationSource(String source, Reason reason){
+
         this.source = Objects.requireNonNull(source);
         this.reason = reason;
         this.clazzSource = null;

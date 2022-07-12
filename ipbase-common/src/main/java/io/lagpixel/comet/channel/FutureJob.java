@@ -1,6 +1,9 @@
 package io.lagpixel.comet.channel;
 
-import java.util.concurrent.ExecutionException;
+import io.lagpixel.comet.worker.Task;
+import org.jetbrains.annotations.NotNull;
+
+import java.util.concurrent.*;
 
 public interface FutureJob<T>{
     /**
@@ -47,4 +50,12 @@ public interface FutureJob<T>{
      * @throws InterruptedException
      */
     T get() throws ExecutionException, InterruptedException;
+
+    Task<T> getTask();
+
+    ScheduledFuture<T> scheduledFuture();
+
+    default Future<T> future(){
+        return scheduledFuture();
+    }
 }
